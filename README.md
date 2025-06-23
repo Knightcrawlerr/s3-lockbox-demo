@@ -45,6 +45,7 @@ A production-ready demo showcasing secure file upload and retrieval to AWS S3 us
 3. The file is streamed to the browser with correct MIME headers.
 4. The file is **auto-deleted** after a timeout using a scheduled task.
 
+
 ## Auto-Deletion Logic
 
 When a file is downloaded:
@@ -61,6 +62,19 @@ exec("echo 'rm "$tmpPath"' | at now + 2 minutes");
 - `cron` isn’t precise for file-specific timers.
 - Immediate deletion would prevent download if transfer is slow.
 - Using `at` allows **per-file self-expiry**, which is secure and flexible.
+
+
+## AWS SDK for PHP
+
+This app uses the standalone AWS SDK for PHP as a `.phar` file.
+
+Download it before running the app:
+
+```bash
+curl -O https://docs.aws.amazon.com/aws-sdk-php/v3/download/aws.phar
+```
+
+Place aws.phar in the project root (/var/www/html/ or wherever your app is deployed).
 
 
 ## Security Highlights
