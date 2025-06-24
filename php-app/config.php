@@ -4,7 +4,7 @@ require 'aws.phar';
 use Aws\S3\S3Client;
 
 $region = 'us-east-1';
-$bucket = 'demo-s3-pii';
+$bucket = 's3-lockbox-demo';
 $tempDir = __DIR__ . '/temp';
 
 // AWS S3 client
