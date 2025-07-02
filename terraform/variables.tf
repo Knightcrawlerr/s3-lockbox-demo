@@ -1,7 +1,32 @@
-variable "aws_region" {
-  description = "AWS region to deploy resources"
+variable "region" {
+  description = "The AWS region to deploy resources in"
+  type        = string
   default     = "us-east-1"
   
+}
+
+variable "environment" {
+  default = "demo"
+}
+
+variable "vpc_cidr" {
+  description = "CIDR block for the VPC"
+  type        = string
+  default     = "10.0.0.0/16"
+}
+
+variable "public_subnet_cidrs" {
+  description = "List of CIDR blocks for public subnets"
+  type        = list(string)
+  default     = ["10.0.1.0/24", "10.0.2.0/24"]
+  
+}
+
+variable "private_subnet_cidrs" {
+  description = "List of CIDR blocks for private subnets"
+  type        = list(string)
+  default     = ["10.0.3.0/24", "10.0.4.0/24"]
+
 }
 
 variable "instance_type" {
@@ -22,35 +47,15 @@ variable "key_name" {
   
 }
 
-
+variable "admin_user_arn" {
+  description = "ARN of the admin user"
+  type        = string
+  default     = "arn:aws:iam::867344441958:user/admin-001"
+}
 
 variable "private_key_path" {
   description = "Path to the private key file for SSH access"
   default     = "~/aws_login.pem"
-  
-}
-
-variable "vpc_cidr_block" {
-  description = "CIDR block for the VPC"
-  default     = "10.0.0.0/16"
-  
-}
-
-variable "subnet_cidr_block" {
-  description = "CIDR block for the subnet"
-  default     = "10.0.1.0/24"
-  
-}
-
-variable "availability_zone" {
-  description = "Availability zone for the subnet"
-  default     = "us-east-1a"
-  
-}
-
-variable "admin_user_arn" {
-  description = "ARN of the IAM user"
-  default     = "arn:aws:iam::867344441958:user/admin-001"
   
 }
 

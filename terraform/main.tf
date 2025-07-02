@@ -1,6 +1,134 @@
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = ">= 6.0.0"
+    }
+  }
+}
+
 provider "aws" {
-  region = var.aws_region
-  
+  region = var.region
+}
+
+locals {
+  availability_zones = ["${var.region}a", "${var.region}b"]
+  name_prefix        = "lockbox"
+}
+
+resource "aws_vpc" "lockbox_vpc" {
+  cidr_block = var.vpc_cidr
+  enable_dns_support = true
+  enable_dns_hostnames = true
+
+  tags = {
+    Name = "${local.name_prefix}-lockbox-vpc"
+    Environment = var.environment
+  }
+}
+
+resource "aws_subnet" "public_subnet" {
+  count = length(var.public_subnet_cidrs)
+  vpc_id = aws_vpc.lockbox_vpc.id
+  cidr_block = element(var.public_subnet_cidrs, count.index)
+  availability_zone = element(local.availability_zones, count.index)
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name = "${local.name_prefix}-public-subnet-${count.index + 1}"
+    Environment = var.environment
+  }
+}
+
+resource "aws_subnet" "private_subnet" {
+  count = length(var.private_subnet_cidrs)
+  vpc_id = aws_vpc.lockbox_vpc.id
+  cidr_block = element(var.private_subnet_cidrs, count.index)
+  availability_zone = element(local.availability_zones, count.index)
+
+  tags = {
+    Name = "${local.name_prefix}-private-subnet-${count.index + 1}"
+    Environment = var.environment
+  }
+}
+
+resource "aws_internet_gateway" "igw" {
+  vpc_id = aws_vpc.lockbox_vpc.id
+
+  tags = {
+    Name = "${local.name_prefix}-igw"
+    Environment = var.environment
+  }
+}
+
+resource "aws_eip" "s3_lockbox_eip" {
+  domain = "vpc"
+}
+
+resource "aws_nat_gateway" "s3_lockbox_nat_gateway" {
+  allocation_id = aws_eip.s3_lockbox_eip.id
+  subnet_id    = aws_subnet.public_subnet[0].id
+
+  tags = {
+    Name        = "${local.name_prefix}-nat-gateway"
+    Environment = var.environment
+  }
+}
+
+resource "aws_route_table" "public_rt" {
+  vpc_id = aws_vpc.lockbox_vpc.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.igw.id
+  }
+
+  tags = {
+    Name = "${local.name_prefix}-public-rt"
+    Environment = var.environment
+  }
+}
+
+resource "aws_route_table" "private_rt" {
+  vpc_id = aws_vpc.lockbox_vpc.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.s3_lockbox_nat_gateway.id
+  }
+
+  tags = {
+    Name = "${local.name_prefix}-private-rt"
+    Environment = var.environment
+  }
+}
+
+resource "aws_route_table_association" "public_subnet_association" {
+  count = length(var.public_subnet_cidrs)
+  subnet_id      = element(aws_subnet.public_subnet.*.id, count.index)
+  route_table_id = aws_route_table.public_rt.id
+}
+
+resource "aws_route_table_association" "private_subnet_association" {
+  count = length(var.private_subnet_cidrs)
+  subnet_id      = element(aws_subnet.private_subnet.*.id, count.index)
+  route_table_id = aws_route_table.private_rt.id
+}
+
+resource "aws_vpc_endpoint" "lockbox_vpce" {
+  vpc_id       = aws_vpc.lockbox_vpc.id
+  service_name = "com.amazonaws.${var.region}.s3"
+  vpc_endpoint_type = "Gateway"
+
+  route_table_ids = [
+    aws_route_table.public_rt.id,
+    aws_route_table.private_rt.id
+  ]
+
+  tags = {
+    Name        = "${local.name_prefix}-lockbox-vpce"
+    Environment = var.environment
+  }
 }
 
 data "aws_iam_policy_document" "s3_lockbox_demo_policy" {
@@ -45,97 +173,14 @@ resource "aws_iam_role_policy_attachment" "s3_lockbox_demo_role_policy_attachmen
   policy_arn = aws_iam_policy.s3_lockbox_demo_policy.arn
 }
 
-resource "aws_vpc" "lockbox_vpc" {
-  cidr_block = var.vpc_cidr_block
-  enable_dns_support = true
-  enable_dns_hostnames = true
-
-  tags = {
-    Name = "s3_lockbox_demo_vpc"
-  }
-  
-}
-resource "aws_vpc_endpoint" "s3" {
-  vpc_id       = aws_vpc.lockbox_vpc.id
-  service_name = "com.amazonaws.${var.aws_region}.s3"
-  vpc_endpoint_type = "Gateway"
-
-  route_table_ids = [aws_route_table.lockbox_route_table.id]
-}
-
-resource "aws_subnet" "lockbox_subnet" {
-  vpc_id            = aws_vpc.lockbox_vpc.id
-  cidr_block        = var.subnet_cidr_block
-  map_public_ip_on_launch = true
-  availability_zone = var.availability_zone
-
-  tags = {
-    Name = "s3_lockbox_demo_subnet"
-  }
-}
-
-resource "aws_internet_gateway" "lockbox_gateway" {
-  vpc_id = aws_vpc.lockbox_vpc.id
-
-  tags = {
-    Name = "s3_lockbox_demo_gateway"
-  }
-}
-
-resource "aws_route_table" "lockbox_route_table" {
-  vpc_id = aws_vpc.lockbox_vpc.id
-
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.lockbox_gateway.id
-  }
-
-  tags = {
-    Name = "s3_lockbox_demo_route_table"
-  }
-}
-
-resource "aws_route_table_association" "lockbox_route_table_association" {
-  subnet_id      = aws_subnet.lockbox_subnet.id
-  route_table_id = aws_route_table.lockbox_route_table.id
-}
-
-resource "aws_security_group" "lockbox_security_group" {
-  vpc_id = aws_vpc.lockbox_vpc.id
-
-  ingress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    from_port = 22
-    to_port   = 22
-    protocol  = "tcp"
-    cidr_blocks = ["0.0.0.0/0"] 
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = {
-    Name = "s3_lockbox_demo_security_group"
-  }
-}
-
 
 resource "aws_s3_bucket" "lockbox_bucket" {
   bucket = "s3-lockbox-demo"
   force_destroy = true
 
   tags = {
-    Name = "s3_lockbox_demo_bucket"
+    Name        = "${local.name_prefix}-lockbox-bucket"
+    Environment = var.environment
   }
 }
 
@@ -174,7 +219,7 @@ data "aws_iam_policy_document" "s3_lockbox_demo_bucket_policy" {
     condition {
       test     = "StringNotEquals"
       variable = "aws:SourceVpce"
-      values = [aws_vpc_endpoint.s3.id]
+      values = [aws_vpc_endpoint.lockbox_vpce.id]
     }
   }
   statement {
@@ -182,14 +227,14 @@ data "aws_iam_policy_document" "s3_lockbox_demo_bucket_policy" {
     effect = "Allow"
     principals {
       type        = "AWS"
-      identifiers = [var.demo_s3_upload_role_arn]
+      identifiers = [aws_iam_role.s3_lockbox_demo_role.arn]
     }
     actions   = ["s3:PutObject", "s3:GetObject"]
     resources = ["arn:aws:s3:::s3-lockbox-demo/*"]
     condition {
       test     = "StringEquals"
       variable = "aws:SourceVpce"
-      values   = [aws_vpc_endpoint.s3.id]
+      values   = [aws_vpc_endpoint.lockbox_vpce.id]
     }
   }
   statement {
@@ -211,53 +256,199 @@ resource "aws_s3_bucket_policy" "lockbox_bucket_policy" {
   policy = data.aws_iam_policy_document.s3_lockbox_demo_bucket_policy.json
 }
 
-resource "aws_iam_instance_profile" "lockbox_instance_profile" {
+
+resource "aws_iam_instance_profile" "s3_lockbox_demo_instance_profile" {
   name = "s3_lockbox_demo_instance_profile"
+
   role = aws_iam_role.s3_lockbox_demo_role.name
-  
 }
 
-resource "aws_instance" "lockbox_instance" {
+resource "aws_security_group" "s3_lockbox_demo_security_group" {
+  name        = "${local.name_prefix}-lockbox-sg"
+  vpc_id      = aws_vpc.lockbox_vpc.id
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    security_groups = [aws_security_group.s3_lockbox_demo_lb_security_group.id]
+  }
+
+  ingress {
+    from_port = 22
+    to_port   = 22
+    protocol  = "tcp"
+    security_groups = [aws_security_group.s3_lockbox_bastion_security_group.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${local.name_prefix}-lockbox-sg"
+    Environment = var.environment
+  }
+}
+
+
+resource "aws_launch_template" "s3_lockbox_demo_launch_template" {
+  name_prefix   = "lockbox-launch-template-"
+  image_id      = var.ami_id
+  instance_type = var.instance_type
+  key_name      = var.key_name
+
+  vpc_security_group_ids = [aws_security_group.s3_lockbox_demo_security_group.id]
+
+
+  iam_instance_profile {
+    name = aws_iam_instance_profile.s3_lockbox_demo_instance_profile.name
+  }
+
+  user_data = base64encode(templatefile("scripts/user_data.sh", {
+    bucket_name = aws_s3_bucket.lockbox_bucket.bucket
+  }))
+
+  tag_specifications {
+    resource_type = "instance"
+    tags = {
+      Name        = "${local.name_prefix}-lockbox-instance"
+      Environment = var.environment
+    }
+  }
+}
+
+
+resource "aws_autoscaling_group" "s3_lockbox_demo_asg" {
+  launch_template {
+    id      = aws_launch_template.s3_lockbox_demo_launch_template.id
+    version = aws_launch_template.s3_lockbox_demo_launch_template.latest_version
+  }
+
+  min_size     = 2
+  max_size     = 4
+  desired_capacity = 2
+
+  vpc_zone_identifier = aws_subnet.private_subnet[*].id
+
+}
+
+
+
+resource "aws_security_group" "s3_lockbox_demo_lb_security_group" {
+  name        = "${local.name_prefix}-lb-sg"
+  vpc_id     = aws_vpc.lockbox_vpc.id
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name        = "${local.name_prefix}-lb-sg"
+    Environment = var.environment
+  }
+}
+
+resource "aws_lb" "s3_lockbox_demo_lb" {
+  name               = "${local.name_prefix}-lb"
+  internal           = false
+  load_balancer_type = "application"
+
+  security_groups = [aws_security_group.s3_lockbox_demo_lb_security_group.id]
+  
+  subnets = aws_subnet.public_subnet[*].id
+
+  enable_deletion_protection = false
+
+  tags = {
+    Name        = "${local.name_prefix}-lockbox-lb"
+    Environment = var.environment
+  }
+}
+
+resource "aws_lb_target_group" "s3_lockbox_demo_lb_target_group" {
+  name     = "${local.name_prefix}-lb-tg"
+  port     = 80
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.lockbox_vpc.id
+
+  health_check {
+    path     = "/index.php"
+    protocol = "HTTP"
+  }
+
+
+  tags = {
+    Name        = "${local.name_prefix}-lockbox-lb-tg"
+    Environment = var.environment
+  }
+}
+
+resource "aws_lb_listener" "s3_lockbox_demo_lb_listener" {
+  load_balancer_arn = aws_lb.s3_lockbox_demo_lb.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type = "forward"
+    target_group_arn = aws_lb_target_group.s3_lockbox_demo_lb_target_group.arn
+  }
+}
+
+resource "aws_autoscaling_attachment" "s3_lockbox_demo_asg_attachment" {
+  autoscaling_group_name = aws_autoscaling_group.s3_lockbox_demo_asg.name
+  lb_target_group_arn    = aws_lb_target_group.s3_lockbox_demo_lb_target_group.arn
+}
+
+
+resource "aws_security_group" "s3_lockbox_bastion_security_group" {
+  name        = "${local.name_prefix}-bastion-sg"
+  vpc_id     = aws_vpc.lockbox_vpc.id
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name        = "${local.name_prefix}-bastion-sg"
+    Environment = var.environment
+  }
+}
+
+resource "aws_instance" "bastion" {
   ami           = var.ami_id
   instance_type = var.instance_type
   key_name      = var.key_name
-  subnet_id     = aws_subnet.lockbox_subnet.id
+  subnet_id     = aws_subnet.public_subnet[0].id
   associate_public_ip_address = true
-  vpc_security_group_ids = [aws_security_group.lockbox_security_group.id]
-  iam_instance_profile = aws_iam_instance_profile.lockbox_instance_profile.name
+
+  vpc_security_group_ids = [aws_security_group.s3_lockbox_bastion_security_group.id]
 
   tags = {
-    Name = "s3_lockbox_demo_instance"
-  }
-
-  connection {
-    type        = "ssh"
-    user        = "ubuntu"
-    private_key = file(var.private_key_path)
-    host        = self.public_ip
-    timeout     = "4m"
-  }
-
-  provisioner "file" {
-    source      = "../php-app"
-    destination = "/tmp/php-app"
-
-  }
-  provisioner "remote-exec" {
-    inline = [
-      "sudo apt-get update",
-      "sudo apt-get install -y unzip apache2 php php-cli php-xml php-mbstring php-curl php-zip",
-      "sudo systemctl enable apache2",
-      "sudo systemctl start apache2",
-      "sudo mv /tmp/php-app/* /var/www/html/",
-      "sudo curl -L -o /var/www/html/aws.phar 'https://docs.aws.amazon.com/aws-sdk-php/v3/download/aws.phar'",
-      "sudo mkdir -p /var/www/html/temp",
-      "sudo chown -R www-data:www-data /var/www/html/temp",
-      "sudo chmod 750 /var/www/html/temp"
-    ]
+    Name        = "${local.name_prefix}-bastion-instance"
+    Environment = var.environment
   }
 }
-
-
-
-
