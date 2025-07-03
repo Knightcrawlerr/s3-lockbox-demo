@@ -1,9 +1,25 @@
-# Secure S3 Upload Demo (PHP + Terraform)
+# Secure S3 File Upload Demo on AWS using PHP and Terraform
 
-A production-ready demo showcasing secure file upload and retrieval to AWS S3 using a PHP web application and Terraform-managed infrastructure. This project is designed with **security-first principles**, encryption, metadata-based filtering (like PII tagging), and least privilege IAM.
+This project provisions a secure and scalable environment on AWS to upload and retrieve files using a PHP web application running on EC2. The architecture uses best practices for security, network isolation, and access control.
 
+## Architecture Overview
 
+### Security Design Highlights
+- **Private EC2 instances in Auto Scaling Group** with a Load Balancer (ALB)
+- **VPC S3 Gateway Endpoint** to restrict access to S3
+- **S3 bucket policy** to allow access only from VPC Endpoint and admin IAM user
+- **IAM Role** attached to EC2 via instance profile for secure access to S3
+- **Public Bastion Host** for controlled SSH access
 
+### Components
+- **VPC**: Public and Private Subnets (across 2 AZs)
+- **Internet Gateway & NAT Gateway**: Outbound access from private subnets
+- **ALB**: Routes public HTTP traffic to private EC2 instances
+- **EC2 Instances**: Host PHP upload app, managed by Auto Scaling Group
+- **Bastion Host**: For debugging or SSH access to private instances
+- **S3 Bucket**: Encrypted, versioned, and access-controlled
+
+  
 ## Key Features
 
  Upload files to S3 via a PHP application using:
@@ -64,18 +80,21 @@ exec("echo 'rm "$tmpPath"' | at now + 2 minutes");
 - Using `at` allows **per-file self-expiry**, which is secure and flexible.
 
 
-## AWS SDK for PHP
+## Deployment Instructions
 
-This app uses the standalone AWS SDK for PHP as a `.phar` file.
-
-Download it before running the app:
-
+1. **Clone this repo**
 ```bash
-curl -O https://docs.aws.amazon.com/aws-sdk-php/v3/download/aws.phar
+git clone https://github.com/Knightcrawlerr/s3-lockbox-demo.git
+cd s3-lockbox-demo
 ```
 
-Place aws.phar in the project root (/var/www/html/ or wherever your app is deployed).
+2. **Update Terraform variables in `terraform.tfvars`**
 
+3. **Run Terraform**
+```bash
+terraform init
+terraform apply
+```
 
 ## Security Highlights
 
@@ -97,6 +116,12 @@ terraform init
 terraform apply
 ```
 
+## Test the Application
+
+1. Access the **Load Balancer DNS** from the output in your browser.
+2. Upload a file and retrieve it using the app interface.
+3. Check S3 bucket for uploaded file.
+
 The PHP code is zipped and copied to EC2 via provisioners. Or you can SSH in and run it manually.
 
 
@@ -110,5 +135,12 @@ The PHP code is zipped and copied to EC2 via provisioners. Or you can SSH in and
   - `openssl`, `php-mbstring`, `php-xml`, `php-curl`, etc.
   - `at` installed (`sudo apt install at`)
 - PHP CLI and AWS SDK (`aws.phar` bundled)
+
+## To-Do / Enhancements
+
+- Add HTTPS via ACM + ALB listener rule
+- Add WAF rules
+- Monitor with CloudWatch & GuardDuty
+- Add pre-signed URL support (future)
 
 
